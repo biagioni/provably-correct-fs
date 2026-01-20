@@ -4,10 +4,13 @@ begin
 
 (* the name of a file is a string, the contents are a list of numbers \<ge> 0 *)
 (* to do: would it be possible to have the contents be a byte list?
- * what is a char in isabelle? *)
+ * I think the Isabelle char would work, then a file system would
+ * be a (string * string) list *)
 
 datatype read_result = Data "nat list" | File_Not_Found
-datatype write_result = Written "(string * nat list) list" | Insufficent_Space | Exists
+datatype write_result = Written "(string * nat list) list"
+                      | Insufficent_Space
+                      | Exists
 
 fun names :: "(string * nat list) list \<Rightarrow> string list" where
 "names [] = []" |
@@ -34,29 +37,43 @@ fun read_file :: "(string * nat list) list \<Rightarrow> string \<Rightarrow> re
   (if name = first_name then Data first_data
    else read_file rest name)"
 
+(* if name occurs more than once, removes only the first matching file
+   normally names are unique, so this is the main remove method. *)
+fun remove_once :: "(string * nat list) list \<Rightarrow> string \<Rightarrow>
+                   (string * nat list) list" where
+"remove_once [] name = []" |
+"remove_once ((first_name, first_content) # rest) name =
+  (if name = first_name then rest
+   else (first_name, first_content) # (remove_once rest name))"
 
 (* if name occurs more than once, removes all of the matching files
  * any file system created only as a result of write_file and remove
- * should not have duplicates, but have not yet figured out how to
- * express that in Isabelle, so might as well remove all. *)
-fun remove :: "(string * nat list) list \<Rightarrow> string \<Rightarrow> (string * nat list) list" where
-"remove [] name = []" |
-"remove ((first_name, first_content) # rest) name =
-  (if name = first_name then remove rest name
-   else (first_name, first_content) # (remove rest name))"
+ * does not have duplicates, so maybe eliminate remove_all eventually. *)
+fun remove_all :: "(string * nat list) list \<Rightarrow> string \<Rightarrow>
+                   (string * nat list) list" where
+"remove_all [] name = []" |
+"remove_all ((first_name, first_content) # rest) name =
+  (if name = first_name then remove_all rest name
+   else (first_name, first_content) # (remove_all rest name))"
 
-fun has_file :: "(string * nat list) list \<Rightarrow> string \<Rightarrow> bool" where 
+fun has_file :: "(string * nat list) list \<Rightarrow> string \<Rightarrow>
+                 bool" where 
 "has_file fs name = ((read_file fs name) \<noteq> File_Not_Found)"
 
-fun not_in_fs :: "(string * nat list) list \<Rightarrow> string \<Rightarrow> bool" where 
+fun not_in_fs :: "(string * nat list) list \<Rightarrow> string \<Rightarrow>
+                  bool" where 
 "not_in_fs fs name = ((read_file fs name) = File_Not_Found)"
 
-lemma has_not_opposites [simp]: "has_file fs name = (\<not> not_in_fs fs name)"
+(* has_file and not_in_fs are opposites *)
+lemma has_not_opposites [simp]:
+"has_file fs name = (\<not> not_in_fs fs name)"
   by simp
 
-fun has_file2 :: "(string * nat list) list \<Rightarrow> string \<Rightarrow> bool" where 
+fun has_file2 :: "(string * nat list) list \<Rightarrow> string \<Rightarrow>
+                  bool" where 
 "has_file2 fs name = member (names fs) name"
 
+(* has_file and has_file2 are equivalent *)
 lemma has_file_equiv [simp]:
 "has_file fs name = has_file2 fs name"
 proof (induct fs)
@@ -65,7 +82,8 @@ proof (induct fs)
 next
   case (Cons a fs)
   then show ?case
-    by (smt (verit) has_file.simps has_file2.elims(1) list.distinct(1) list.inject member.elims(1) names.elims prod.inject read_file.elims
+    by (smt (verit) has_file.simps has_file2.elims(1) list.distinct(1)
+        list.inject member.elims(1) names.elims prod.inject read_file.elims
         read_result.simps(3))
 qed
 
@@ -80,7 +98,7 @@ lemma name_in_set_beginning_with_name [simp]: "name \<in> set (name # rest)"
 lemma name_in_fs_beginning_with_name [simp]: "name \<in> set (names ((name, content) # rest))"
   by simp
 
-lemma has_file_correct :
+lemma has_file_correct [simp] :
 "(if has_file fs name then name \<in> set (names fs)
   else name \<notin> set (names fs))"
 proof (induct fs)
@@ -89,46 +107,111 @@ proof (induct fs)
 next
   case (Cons a list)
   then show ?case  (* proof found by sledghammer e *)
-    by (metis has_file2.elims(1) has_file_equiv insert_iff list.simps(15) names.simps(2) old.prod.exhaust
+    by (metis has_file2.elims(1) has_file_equiv insert_iff
+        list.simps(15) names.simps(2) old.prod.exhaust
         ramfs_sized.member.simps(2))
 qed
 
 lemma read_file_succeeds_if_file_in_fs :
-"member (names fs) name \<Longrightarrow> read_file fs name \<noteq> File_Not_Found"  (* proof found by sledgehammer cvc5 and spass and e *)
+"member (names fs) name \<Longrightarrow>
+  read_file fs name \<noteq> File_Not_Found"
+  (* proof found by sledgehammer cvc5 and spass and e *)
   using has_file_equiv by auto
 
 lemma read_file_succeeds_if_file_in_fs2 :
 "has_file fs name \<Longrightarrow> read_file fs name \<noteq> File_Not_Found"
   by simp
 
-lemma remove_removes : "not_in_fs (remove fs name) name"
+(* unable to prove:
+lemma remove_once_removes_if_distinct :
+"distinct (names fs) \<Longrightarrow>
+   not_in_fs (remove_once fs name) name"
+proof (induct fs)
+  case Nil
+  then show ?case by simp
+next
+  case (Cons a fs)
+  then show ?case by 
+qed
+*)
+
+lemma remove_all_removes : "not_in_fs (remove_all fs name) name"
 proof (induct fs)
   case Nil
   then show ?case by auto
 next
   case (Cons a fs)  (* proof found by sledgehammer cvc5 *)
-  then show ?case by (metis (no_types, lifting) fst_conv list.distinct(1) list.inject not_in_fs.elims(2,3) read_file.elims remove.elims)
+  then show ?case by (metis (no_types, lifting) fst_conv list.distinct(1)
+                         list.inject not_in_fs.elims(2,3)
+                         read_file.elims remove_all.elims)
 qed
 
-lemma remove_nonexistent_no_change :
-"not_in_fs fs name ==> remove fs name = fs"
+fun num_names :: "(string * nat list) list \<Rightarrow> string \<Rightarrow> nat" where
+"num_names [] name = 0" |
+"num_names ((first_name, first_content) # rest) name =
+  (if first_name = name then 1 else 0) + num_names rest name"
+
+lemma remove_once_has_one_less :
+"has_file fs name \<Longrightarrow> num_names fs name = 1 + num_names (remove_once fs name) name"
 proof (induct fs)
   case Nil
   then show ?case by simp
 next
   case (Cons a fs)
   then show ?case (* proof found by sledgehammer cvc5 *)
-    by (smt (z3) list.inject not_in_fs.simps read_file.simps(2) read_result.simps(3) remove.elims)
+    by (smt (verit) add_0 has_file.simps list.distinct(1) list.inject num_names.elims
+        prod.inject read_file.simps(2) remove_once.elims)
 qed
 
-lemma read_cleared_by_remove :
-"read_file (remove fs name) name = File_Not_Found"
-  (* proof found by sledgehammer cvc5 vampire verit spass *)
-  using remove_removes by auto
+lemma remove_once_removes_distinct :
+"distinct (names fs) \<Longrightarrow> not_in_fs (remove_once fs name) name"
+proof (induct fs)
+  case Nil
+  then show ?case by auto
+next
+  case (Cons a fs)  (* proof found by sledgehammer cvc5 *)
+  then show ?case
+    by (smt (verit) distinct.simps(2) has_file.simps has_file_correct
+        list.distinct(1) list.inject names.elims not_in_fs.simps
+        prod.inject read_file.elims remove_once.elims) 
+qed
 
-lemma read_ignores_different_remove :
+lemma remove_all_nonexistent_no_change :
+"not_in_fs fs name ==> remove_all fs name = fs"
+proof (induct fs)
+  case Nil
+  then show ?case by simp
+next
+  case (Cons a fs)
+  then show ?case (* proof found by sledgehammer cvc5 *)
+    by (smt (z3) list.inject not_in_fs.simps read_file.simps(2)
+        read_result.simps(3) remove_all.elims)
+qed
+
+lemma remove_once_nonexistent_no_change :
+"not_in_fs fs name ==> remove_once fs name = fs"
+proof (induct fs)
+  case Nil
+  then show ?case by simp
+next
+  case (Cons a fs)
+  then show ?case (* proof found by sledgehammer cvc5 *)
+    by (smt (z3) has_file.simps has_file_correct list.inject name_in_fs_beginning_with_name
+        not_in_fs.simps read_file.simps(2) remove_once.elims) (* proof found by sledgehammer cvc5 *)
+qed
+
+lemma read_cleared_by_remove_all :
+"read_file (remove_all fs name) name = File_Not_Found"
+  (* proof found by sledgehammer cvc5 vampire verit spass *)
+  using remove_all_removes by auto
+
+lemma read_cleared_by_remove_once :
+"distinct (names fs) \<Longrightarrow> read_file (remove_once fs name) name = File_Not_Found"
+  using remove_once_removes_distinct by auto
+
+lemma read_ignores_different_remove_all :
 "name1 \<noteq> name2 \<Longrightarrow>
-   read_file fs name1 = read_file (remove fs name2) name1"
+   read_file fs name1 = read_file (remove_all fs name2) name1"
 proof (induct fs)
   case Nil
   then show ?case by simp
@@ -136,14 +219,29 @@ next
   case (Cons a fs)
   then show ?case  (* proof found by sledgehammer cvc5 *)
     by (smt (verit) list.distinct(1) list.inject prod.inject read_file.elims
-        remove.elims)
+        remove_all.elims)
 qed
 
-(* assume 16 bytes overhead per file, plus the bytes in the name and the bytes in the content *)
+lemma read_ignores_different_remove_once :
+"name1 \<noteq> name2 \<and> distinct (names fs) \<Longrightarrow>
+   read_file fs name1 = read_file (remove_once fs name2) name1"
+proof (induct fs)
+  case Nil
+  then show ?case by simp
+next
+  case (Cons a fs)
+  then show ?case  (* proof found by sledgehammer cvc5 *)
+    by (smt (verit) distinct_length_2_or_more list.distinct(1) list.inject
+        names.elims prod.inject read_file.elims remove_once.elims)
+qed
+
+(* assume 17 bytes overhead per file, plus the bytes in the name
+   and the bytes in the content.  17 bytes assuming a 16-byte header
+   and one byte to null-terminate the name *)
 fun space_used :: "(string * nat list) list \<Rightarrow> nat" where
 "space_used [] = 0" |
 "space_used ((first_name, first_content) # rest) =
-      length first_name + length first_content + 16 + space_used rest"
+      length first_name + length first_content + 17 + space_used rest"
 
 fun write_file :: "(string * nat list) list \<Rightarrow> string \<Rightarrow> nat list \<Rightarrow> nat \<Rightarrow> write_result" where
 "write_file fs name content max_size =
@@ -160,7 +258,7 @@ fun write_file :: "(string * nat list) list \<Rightarrow> string \<Rightarrow> n
      else Insufficent_Space))"
 *)
 
-(* always returns the file system, even in case of failure *)
+(* always returns the file system.  If unable to write, returns the old fs *)
 fun write_return_fs :: "(string * nat list) list \<Rightarrow> string \<Rightarrow> nat list \<Rightarrow> nat \<Rightarrow> (string * nat list) list" where
 "write_return_fs fs name content max_size =
    (case write_file fs name content max_size of
@@ -178,51 +276,282 @@ lemma successful_write_is_at_front:
   by (metis write_file.simps write_result.inject write_result.simps(3,5))
 
 lemma missing_file_unchanged_by_other_write :
-"name1 \<noteq> name2 \<and> not_in_fs fs name1 \<and>
-   write_file fs name2 content2 max_size = Written new_fs ==>
-   not_in_fs new_fs name1"
-proof (induct fs)
-  case Nil
-  then show ?case (* proof found by sledgehammer e *)
-    by (metis not_in_fs.elims(3) read_file.simps(1,2) successful_write_is_at_front)
-next
-  case (Cons a fs)
-  then show ?case (* proof found by sledgehammer vampire *)
-    by (metis has_not_opposites not_in_fs.elims(1) read_file.simps(2)
-        successful_write_is_at_front write_file.simps write_result.simps(5))
-qed
+"name1 \<noteq> name2 \<and> not_in_fs fs name1 ==>
+   not_in_fs (write_return_fs fs name2 content2 max_size) name1" by simp
 
+(* not needed:
 lemma successful_read_unchanged_by_other_write :
 "name1 \<noteq> name2 \<and> read_file fs name1 = Data content1 \<and>
    write_file fs name2 content2 max_size = Written new_fs ==>
    read_file new_fs name1 = Data content1" (* proof found by sledgehammer e *)
   by (metis has_file.simps not_in_fs.elims(3) read_file.simps(2)
       successful_write_is_at_front write_file.simps write_result.simps(5))
+*)
 
+(* if a file exists, no write will change it *)
+lemma successful_read_unchanged_by_write:
+"read_file fs name1 = Data content1 \<and>
+   write_return_fs fs name2 content2 max_size = maybe_new_fs \<Longrightarrow>
+   read_file maybe_new_fs name1 = Data content1" by auto
+
+lemma unsuccessful_read_unchanged_by_other_write:
+"name1 \<noteq> name2 \<and> read_file fs name1 = File_Not_Found \<and>
+   write_return_fs fs name2 content2 max_size = maybe_new_fs \<Longrightarrow>
+   read_file maybe_new_fs name1 = File_Not_Found" by auto
+
+(* if a file exists, write to a different name will not change it, as implied
+ * by successful_read_unchanged_by_write.
+ * If it does not exist, write to a different name will not create it *)
 lemma read_unchanged_by_other_write :
 "name1 \<noteq> name2 \<and> read_file fs name1 = result \<and>
    write_file fs name2 content2 max_size = Written new_fs \<Longrightarrow>
-   read_file new_fs name1 = result" (* proof found by sledgehammer vampire *)
-  by (metis has_file.elims(3) not_in_fs.simps read_file.simps(2)
-      successful_write_is_at_front write_file.simps write_result.distinct(3)) 
+   read_file new_fs name1 = result"
+   (* proof found by sledgehammer e (and cvc5) *)
+  by (metis has_not_opposites read_file.simps(2) successful_write_is_at_front
+      write_file.simps write_result.simps(5))
 
-lemma read_ignores_other_write :
-"name1 \<noteq> name2 \<and> read_file fs name1 = result1 \<and>
-     write_file fs name2 content max_size = Written new_fs \<Longrightarrow>
-   read_file new_fs name1 = result1" (* proof found by sledgehammer multiple provers *)
-  using read_unchanged_by_other_write by blast
-
+(* once we've written a file, a subsequent write will not change it
+ * pretty obvious from the preceding lemmas, and the sledghammer proof
+ * reflects this.  Found by sledgehammer cvc5, vampire, spass, and e *)
 lemma read_returns_contents_from_correct_write :
 "name1 \<noteq> name2 \<and> write_file fs name1 content1 max_size = Written new_fs \<Longrightarrow>
      read_file (write_return_fs new_fs name2 content2 max_size)
-                                 name1 = Data content1" (* proof found by sledgehammer cvc5 *)
-  by (metis (no_types, lifting) read_ignores_other_write
-      read_returns_content_from_successful_write write_file.simps write_result.simps(10,8,9)
-      write_return_fs.simps)
+                                 name1 = Data content1"
+  using read_returns_content_from_successful_write successful_read_unchanged_by_write
+  by blast
 
-lemma read_after_write_ignores_different_remove :
+lemma read_after_write_ignores_different_remove_all :
 "name1 \<noteq> name2 \<and> write_file fs name1 content1 max_size = Written new_fs \<Longrightarrow>
-   read_file (remove new_fs name2) name1 = Data content1" (* proof found by sledgehammer verit *)
+   read_file (remove_all new_fs name2) name1 = Data content1" (* proof found by sledgehammer verit *)
   by (metis (no_types, lifting) Pair_inject has_not_opposites list.inject neq_Nil_conv
-      read_file.elims remove.elims successful_write_is_at_front write_file.simps
-      write_result.distinct(3)) 
+      read_file.elims remove_all.elims successful_write_is_at_front
+      write_file.simps write_result.distinct(3))
+
+lemma write_preserves_distinct [simp] :
+"distinct (names fs) \<Longrightarrow> distinct (names (write_return_fs fs name content max_size))"
+  by simp
+
+lemma remove_preserves_distinct [simp] :
+"distinct (names fs) \<Longrightarrow> distinct (names (remove_once fs name))"
+proof (induct fs)
+  case Nil
+  then show ?case by simp
+next
+  case (Cons a fs)
+  then show ?case  (* proof by sledgehammer cvc5 *)
+    by (smt (verit) Pair_inject distinct.simps(2) has_file.simps has_file_correct
+        list.distinct(1) list.inject names.elims read_ignores_different_remove_once
+        remove_once.elims)
+qed
+
+lemma read_after_write_ignores_different_remove_once :
+"name1 \<noteq> name2 \<and>
+ write_file fs name1 content1 max_size = Written new_fs \<and>
+ distinct (names fs) \<Longrightarrow>
+   read_file (remove_once new_fs name2) name1 = Data content1"
+   (* proof found by sledgehammer vampire, different proof found by cvc5 *)
+  by (metis read_ignores_different_remove_once
+          read_returns_content_from_successful_write
+          write_preserves_distinct
+          write_result.simps(8) write_return_fs.simps)
+
+lemma read_after_write_ignores_subsequent_write :
+"write_file fs name content max_size = Written new_fs \<Longrightarrow>
+  read_file (write_return_fs new_fs any_name any_content max_size) name = Data content"
+(* proof found by sledgehammer cvc5, similar proof by vampire *)
+  using read_returns_content_from_successful_write successful_read_unchanged_by_write
+  by blast
+
+(* the operations that may change the file system are write and remove *)
+datatype Op = Write "(string * nat list)" | Remove string
+
+(* can do arbitrary write or remove, except not remove name *)
+(* to distinguish from single_op, below, we refer to this as opr *)
+fun single_op_except_remove :: "(string * nat list) list \<Rightarrow> Op \<Rightarrow> string \<Rightarrow> nat
+                                   \<Rightarrow> (string * nat list) list" where
+"single_op_except_remove fs (Write (name, content)) avoid_removing max_size =
+    write_return_fs fs name content max_size" |
+"single_op_except_remove fs (Remove name) avoid_removing max_size =
+    (if name = avoid_removing then fs else (remove_once fs name))"
+
+(* can do arbitrary write or remove, except not on name *)
+fun single_op :: "(string * nat list) list \<Rightarrow> Op \<Rightarrow> string \<Rightarrow> nat
+                    \<Rightarrow> (string * nat list) list" where
+"single_op fs (Write (name, content)) avoid_name max_size =
+    (if name = avoid_name then fs else write_return_fs fs name content max_size)" |
+"single_op fs (Remove name) avoid_name max_size =
+    (if name = avoid_name then fs else (remove_once fs name))"
+
+(* opn if/when used below *)
+fun single_op_no_exception :: "(string * nat list) list \<Rightarrow> Op \<Rightarrow> nat
+                                   \<Rightarrow> (string * nat list) list" where
+"single_op_no_exception fs (Write (name, content)) max_size =
+    write_return_fs fs name content max_size" |
+"single_op_no_exception fs (Remove name) max_size =
+    remove_once fs name"
+
+lemma single_op_preserves_distinct :
+"distinct (names fs) \<Longrightarrow> distinct (names (single_op_no_exception fs op max_size))"
+  (* proof found by sledgehammer e *)
+  by (metis Op.exhaust old.prod.exhaust remove_preserves_distinct
+      single_op_no_exception.simps(1,2) write_preserves_distinct)
+
+(* as long as we don't remove name,
+   successful read always returns the same value *)
+lemma successful_read_preserved_across_opr :
+"distinct (names fs) \<and> read_file fs name = Data content \<Longrightarrow>
+ read_file (single_op_except_remove fs op name max_size) name = Data content"
+  (* proof found by sledgehammer zipperposition
+     (also by cvc5, with a more complicated proof) *)
+  by (metis Op.exhaust old.prod.exhaust read_ignores_different_remove_once
+      single_op_except_remove.simps(1,2) successful_read_unchanged_by_write) 
+
+(* this is a weaker statement: as long as we don't write or remove name,
+   successful read always returns the same value
+   also apparently much harder to prove! *)
+lemma successful_read_preserved_across_op :
+"distinct (names fs) \<and> read_file fs name = Data content \<Longrightarrow>
+ read_file (single_op fs op name max_size) name = Data content"
+  using successful_read_preserved_across_opr
+  (* proof found by sledgehammer cvc5 *)
+  by (smt read_ignores_different_remove_once single_op.elims
+      successful_read_unchanged_by_write) 
+
+(* as long as we don't write or remove name,
+   unsuccessful read always returns the same value *)
+lemma unsuccessful_read_preserved_across_op :
+"distinct (names fs) \<and> read_file fs name = File_Not_Found \<Longrightarrow>
+ read_file (single_op fs op name max_size) name = File_Not_Found"
+  (* proof found by sledgehammer cvc5 *)
+  by (metis missing_file_unchanged_by_other_write not_in_fs.elims(1)
+      read_ignores_different_remove_once single_op.elims)
+
+lemma read_preserved_across_op :
+"distinct (names fs) \<Longrightarrow>
+  read_file (single_op fs op name max_size) name = read_file fs name"
+  (* proof found by sledgehammer cvc5 had smt (verit), which failed
+     removing (verit) now works.  Very strange *)
+  by (smt read_ignores_different_remove_once read_result.exhaust single_op.elims
+      successful_read_unchanged_by_write
+      unsuccessful_read_preserved_across_op)
+
+(* ===================================================================== *)
+(* so far, I have been unable to prove anything useful with multiple ops.
+   Ultimately would like to prove that any number of writes and removes
+   to other names do not change the value returned by reading a
+   specific file name *)
+fun multiple_opr :: "Op list \<Rightarrow> (string * nat list) list \<Rightarrow> string \<Rightarrow> nat
+                          \<Rightarrow> (string * nat list) list" where
+"multiple_opr [] fs avoid_removing max_size = fs" |
+"multiple_opr (first # rest) fs avoid_removing max_size =
+   multiple_opr rest (single_op_except_remove fs first avoid_removing max_size)
+                avoid_removing max_size"
+
+fun multiple_op :: "Op list \<Rightarrow> (string * nat list) list \<Rightarrow> string \<Rightarrow> nat
+                          \<Rightarrow> (string * nat list) list" where
+"multiple_op [] fs avoid_name max_size = fs" |
+"multiple_op (first # rest) fs avoid_name max_size =
+   multiple_op rest (single_op fs first avoid_name max_size)
+                avoid_name max_size"
+
+fun multiple_write :: "(string * nat list) list \<Rightarrow> (string * nat list) list \<Rightarrow> nat
+                       \<Rightarrow> (string * nat list) list" where
+"multiple_write fs [] max_size = fs" |
+"multiple_write fs ((first_name, first_content) # rest) max_size =
+   multiple_write (write_return_fs fs first_name first_content max_size) rest max_size"
+
+lemma multiple_write_distinct :
+"distinct (names (multiple_write [] files max_size))"
+proof (induct files)
+  case Nil
+  then show ?case by simp
+next
+  case (Cons a files)
+  then show ?case sorry (* unable to prove *)
+qed
+
+
+lemma multiple_write_preserves_distinct :
+"distinct (names fs) \<Longrightarrow>
+  distinct (names (multiple_write fs files max_size))"
+proof (induct files)
+  case Nil
+  then show ?case by simp
+next
+  case (Cons a files)
+  then show ?case sorry   (* unable to prove *)
+qed
+
+lemma multiple_write_does_not_change_existing :
+"read_file fs name = Data content \<Longrightarrow>
+  read_file (multiple_write fs files max_size) name = Data content"
+  using successful_read_unchanged_by_write sorry (* unable to prove *)
+
+fun multiple_remove :: "string list \<Rightarrow> (string * nat list) list
+                               \<Rightarrow> (string * nat list) list" where
+"multiple_remove [] fs = fs" |
+"multiple_remove (first # rest) fs = multiple_remove rest (remove_once fs first)"
+
+lemma read_or_remove_across_multiple_remove :
+"distinct (names fs) \<Longrightarrow>
+   let read_before = read_file fs name in
+   let read_after = read_file (multiple_remove removes fs) name in
+   read_after = File_Not_Found \<or> read_after = read_before"
+proof (induct removes)
+  case Nil
+  then show ?case by simp
+next
+  case (Cons a removes)
+  then show ?case sorry   (* unable to prove this *)
+qed
+
+fun multiple_remove_except :: "string list \<Rightarrow> (string * nat list) list \<Rightarrow> string
+                               \<Rightarrow> (string * nat list) list" where
+"multiple_remove_except [] fs name = fs" |
+"multiple_remove_except (first # rest) fs except =
+   multiple_remove_except rest (if first = except then fs
+                                else (remove_once fs first)) except"
+
+lemma read_preserved_across_remove_except :
+"distinct (names fs) \<Longrightarrow>
+   read_file (multiple_remove_except removes fs name) name = read_file fs name"
+proof (induct removes)
+  case Nil
+  then show ?case by simp
+next
+  case (Cons a removes)
+  then show ?case sorry (* unable to prove *)
+qed
+
+(*
+"distinct (names fs) \<and> read_file fs name = Data content \<Longrightarrow>
+  read_file (multiple_opr opr_list fs name max_size) name = Data content"
+  sorry
+*)
+
+(*
+fun multiple_write :: "string list \<Rightarrow> (string * nat list) list \<Rightarrow> nat
+                           \<Rightarrow> (string * nat list) list" where
+"multiple_write [] fs max_size = fs" |
+"multiple_write (first # rest) fs max_size =
+   multiple_write rest (write_return_fs fs first 
+*)
+
+lemma successful_read_preserved_across_oprs :
+"distinct (names fs) \<and> read_file fs name = Data content \<Longrightarrow>
+  read_file (multiple_opr opr_list fs name max_size) name = Data content"
+  sorry (* unable_to_prove *)
+
+(* multiple_ops can do arbitrary writes or removes, except removing name *)
+lemma read_preserved_across_ops :
+"distinct (names fs) \<Longrightarrow>
+  read_file (multiple_op op_list fs name max_size) name = read_file fs name"
+proof (induct op_list)
+  case Nil
+  then show ?case by simp
+next
+  case (Cons a any_ops)
+  then show ?case sorry (* unable to prove *)
+qed
+
+
