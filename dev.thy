@@ -1,3 +1,5 @@
+(* authors: Edoardo Biagioni, Nicholas Cheng, 2026 *)
+
 theory dev
   imports Main
 begin
@@ -35,23 +37,23 @@ lemma initial_dev_never_null :
 "initial_dev (Suc bs) index \<noteq> Nil"
   by (simp add: initial_dev_def)
 
-fun write_block :: "dev \<Rightarrow> nat \<Rightarrow> data_block \<Rightarrow> dev" where
+definition write_block :: "dev \<Rightarrow> nat \<Rightarrow> data_block \<Rightarrow> dev" where
 "write_block dev bn data = (\<lambda> index . (if index = bn then data else dev index))"
 
 (* true, but not needed for our theorem *)
-lemma read_block_returns_immediately_written :
+lemma read_block_returns_immediately_written [simp]:
 "(write_block dev bn data) bn = data"
-  by simp
+  by (simp add: write_block_def)
 
 (* bbs is a list of pairs of block numbers and blocks *)
 fun write_all :: "dev \<Rightarrow> (nat * data_block) list \<Rightarrow> dev" where
 "write_all dev [] = dev" |
 "write_all dev ((bn, block) # bbs) =
    write_block (write_all dev bbs) bn block"
-
+(*
 lemma write_all_empty : "write_all dev [] = dev"
   by simp
-(*
+
 lemma write_all_single :
 "write_all dev [(bn, block)] = write_block dev bn block"
   by simp
@@ -68,12 +70,10 @@ lemma write_nonempty_blocks :
 "(\<forall> (bn, block) \<in> set bbs . length block = (Suc bs)) \<Longrightarrow>
   write_all (initial_dev (Suc bs)) bbs bn \<noteq> Nil"
   apply (induct bbs arbitrary: bn dev)
-  using initial_dev_never_null write_all_empty
-  apply (presburger)
-  by (smt (verit, ccfv_threshold) list.distinct(1)
-      list.inject list.set_intros(1,2) list.size(3)
-      old.nat.distinct(1) old.prod.case
-      write_all.elims write_block.simps)
+   apply (simp_all add: initial_dev_def initial_dev_never_null)
+  apply(auto)
+  by (metis list.size(3) nat.distinct(1) write_block_def)
+
 
 (* function to demonstrate that even if we write any and all,
    except as long as we avoid the given block number/bn,
@@ -87,11 +87,10 @@ fun write_other_blocks :: "dev \<Rightarrow> nat \<Rightarrow> (nat * data_block
 
 (* no matter what we write at indexes other than block_number/bn,
    reading block_number always returns the original value *)
-theorem read_block_returns_most_recently_written :
+theorem read_block_returns_most_recently_written [simp] :
 "(write_other_blocks (write_block dev bn data) bn writes) bn = data"
   apply (induct writes)
-  apply (auto)
-  done
+  using write_block_def by auto
 
 (* demonstrate that we can write a block and read it again *)
 definition sample_block :: "data_block" where
@@ -113,15 +112,9 @@ fun write_same_sized_blocks :: "dev \<Rightarrow> nat \<Rightarrow> (nat * data_
 
 theorem constant_block_size :
 "(length ((write_same_sized_blocks (initial_dev bs) bs writes) bn)) = bs"
-proof (induct writes)
-  case Nil
-  then show ?case using initial_block_size by simp
-next
-  case (Cons a writes)
-  then show ?case  (* proof found by sledgehammer cvc5, and another by e *)
-    by (smt (verit) initial_block_size list.inject write_block.simps
-        write_same_sized_blocks.elims)
-qed
+  apply(induct writes arbitrary: bs)
+   apply(simp add: initial_dev_def init_block_size)
+  using initial_block_size write_block_def by force
 
 fun all_blocks :: "nat \<Rightarrow> nat \<Rightarrow> dev \<Rightarrow> data_block list" where
 "all_blocks from 0 dev = []" |
